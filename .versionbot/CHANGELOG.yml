@@ -1,0 +1,235 @@
+- commits:
+    - subject: Updated base images and python
+      hash: b8b825632f96f724616c2197ba8be610c84f73df
+      body: ""
+      footer:
+        Change-type: minor
+        change-type: minor
+        Signed-off-by: Phil Wilson <phil@balena.io>
+        signed-off-by: Phil Wilson <phil@balena.io>
+      author: Phil Wilson
+      nested: []
+  version: 2.5.0
+  title: ""
+  date: 2023-08-11T09:25:15.007Z
+- commits:
+    - subject: moving from balenablocks to balena-labs-projects
+      hash: 1f932a1081c79fc5673aeed63e580579a94c5a10
+      body: ""
+      footer:
+        Signed-off-by: Flynn Joffray <flynn@balena.io>
+        signed-off-by: Flynn Joffray <flynn@balena.io>
+        Change-type: patch
+        change-type: patch
+      author: Flynn Joffray
+      nested: []
+  version: 2.4.1
+  title: ""
+  date: 2022-11-16T01:40:06.716Z
+- commits:
+    - subject: Fixes node-red block
+      hash: b4965d960a5888ef99d7d856f33ef3e192998f41
+      body: ""
+      footer:
+        Change-type: minor
+        change-type: minor
+        Signed-off-by: Alex Bucknall <alex.bucknall@gmail.com>
+        signed-off-by: Alex Bucknall <alex.bucknall@gmail.com>
+      author: Alex
+      nested: []
+  version: 2.4.0
+  title: "'Fixes node-red block'"
+  date: 2022-06-13T10:09:48.571Z
+- commits:
+    - subject: make sure ssh workflow 4 projects works
+      hash: 2b5a49d52c76b34748a249d269a0aaf3e5f86911
+      body: ""
+      footer:
+        Change-type: patch
+        change-type: patch
+        Signed-off-by: Carlo Maria Curinga <carlo@balena.io>
+        signed-off-by: Carlo Maria Curinga <carlo@balena.io>
+      author: curcuz
+      nested: []
+  version: 2.3.1
+  date: 2021-10-22T17:09:16.290Z
+- commits:
+    - subject: remove deprecated password hashing instructions
+      hash: e29656b491b4c8697f8cb1dd2f2096efa1f30b30
+      body: ""
+      footer:
+        Change-type: minor
+        change-type: minor
+        Signed-off-by: Carlo Maria Curinga <carlo@balena.io>
+        signed-off-by: Carlo Maria Curinga <carlo@balena.io>
+      author: curcuz
+      nested: []
+  version: 2.3.0
+  date: 2021-10-22T12:24:07.272Z
+- commits:
+    - subject: contract update
+      hash: aa5ec54e901abc2d76be86dffb22f9547710a571
+      body: ""
+      footer:
+        Change-type: patch
+        change-type: patch
+        Signed-off-by: Phil Wilson <phil@balena.io>
+        signed-off-by: Phil Wilson <phil@balena.io>
+      author: Phil Wilson
+      nested: []
+  version: 2.2.4
+  date: 2021-05-21T08:34:40.712Z
+- commits:
+    - subject: Update the balena.yml file to conform to current `balena push`
+        requirement.
+      hash: ec60bd25df5490dbe151051c9003f642f386904e
+      body: ""
+      footer:
+        Change-type: patch
+        change-type: patch
+        Signed-off-by: Pranav Peshwe <pranav@balena.io>
+        signed-off-by: Pranav Peshwe <pranav@balena.io>
+        Connects-to: "#37"
+        connects-to: "#37"
+      author: Pranav Peshwe
+      nested: []
+  version: 2.2.3
+  date: 2021-03-12T07:36:40.113Z
+- commits:
+    - subject: Use svg deploy with balena button
+      hash: 8e8a5a01e59910547d5d82b671218339ce9f6f4a
+      body: ""
+      footer:
+        Change-type: patch
+        change-type: patch
+        Signed-off-by: Amit Solanki <amit@balena.io>
+        signed-off-by: Amit Solanki <amit@balena.io>
+      author: Amit Solanki
+      nested: []
+  version: 2.2.2
+  date: 2020-12-31T10:25:53.280Z
+- commits:
+    - subject: add Dockerfile for rpi4
+      hash: 067a90ab37014b5780336a50b9708b0870507579
+      body: ""
+      footer:
+        Change-type: patch
+        change-type: patch
+        Signed-off-by: Juan Fernandez Ridano <juanfr@balena.io>
+        signed-off-by: Juan Fernandez Ridano <juanfr@balena.io>
+      author: Juan Fernandez Ridano
+      nested: []
+  version: 2.2.1
+  date: 2020-09-14T13:17:58.873Z
+- commits:
+    - subject: Add a DWB button
+      hash: 1ecf5a84b8942b30301e6f4a5927833b4434c1f8
+      body: ""
+      footer:
+        Change-type: minor
+        change-type: minor
+        Signed-off-by: Stevche Radevski <stevche@balena.io>
+        signed-off-by: Stevche Radevski <stevche@balena.io>
+      author: Stevche Radevski
+      nested: []
+  version: 2.2.0
+  date: 2020-09-14T10:17:33.644Z
+- commits:
+    - subject: "Dockerfile: Add missing libatomic1 dependency"
+      hash: 78aebdba80ed38922f19730488972fe3261dec37
+      body: ""
+      footer:
+        Connects-to: "#32"
+        connects-to: "#32"
+        Change-type: patch
+        change-type: patch
+        Signed-off-by: Heds Simons <heds@balena.io>
+        signed-off-by: Heds Simons <heds@balena.io>
+      author: Heds Simons
+  version: 2.1.1
+  date: 2020-02-24T22:46:02.555Z
+- commits:
+    - subject: add correct deps, devices and caps
+      hash: 23b7a40398841759f1f68666bb5c0018d2b5ac6e
+      body: ""
+      footer:
+        Change-type: minor
+        change-type: minor
+        Signed-off-by: Carlo Maria Curinga <carlo@balena.io>
+        signed-off-by: Carlo Maria Curinga <carlo@balena.io>
+      author: curcuz
+  version: 2.1.0
+  date: 2019-09-13T20:30:07.500Z
+- commits:
+    - subject: make sure node-red can talk with the supervisor
+      hash: 806410cc1a6ed2462bac137d8825e6ae26c89159
+      body: ""
+      footer:
+        Change-type: patch
+        change-type: patch
+        Signed-off-by: Carlo Maria Curinga <carlo@balena.io>
+        signed-off-by: Carlo Maria Curinga <carlo@balena.io>
+      author: curcuz
+    - subject: refactor to multicontainer and balena assets
+      hash: 3679bd2cf5f9ec615e653ce8baceda1f6d6837f5
+      body: ""
+      footer:
+        Change-type: major
+        change-type: major
+        Signed-off-by: Carlo Maria Curinga <carlo@balena.io>
+        signed-off-by: Carlo Maria Curinga <carlo@balena.io>
+      author: curcuz
+    - subject: Regenerate changelog file with previous commits
+      hash: bd837e2d6aa0d2e74da58569cbd91346c4904c8a
+      body: ""
+      footer:
+        Change-type: patch
+        change-type: patch
+        Signed-off-by: Giovanni Garufi <giovanni@balena.io>
+        signed-off-by: Giovanni Garufi <giovanni@balena.io>
+      author: Giovanni Garufi
+    - subject: Add versioning information and repo.yml
+      hash: d70c52843bd5aec4f50f86bc427979b15801191d
+      body: ""
+      footer:
+        Change-type: patch
+        change-type: patch
+        Signed-off-by: Gergely Imreh <gergely@balena.io>
+        signed-off-by: Gergely Imreh <gergely@balena.io>
+      author: Gergely Imreh
+  version: 2.0.0
+  date: 2019-09-13T17:13:56.910Z
+- version: 1.0.0
+  date: 2019-03-13T18:47:29Z
+  commits:
+    - hash: 05f302ff9996738f05666bec390756ae3f9e8abd
+      author: Gergely Imreh
+      footers:
+        change-type: minor
+        signed-off-by: Gergely Imreh <gergely@balena.io>
+      subject: switch to balenalib base image and node 10
+      body: ""
+    - hash: 59c706d49a8723a60d42dfced3cfa121af025fb3
+      author: Misha Brukman
+      subject: Fix link to node-red-contrib-balena repo [skip ci]
+      body: ""
+    - hash: a1a65714cc9dcc0cf8c22261952b6ba80684f8e2
+      author: curcuz
+      subject: disable initsystem
+      body: ""
+    - hash: a9561e2330c439187b7e6edf89a9160c874fba95
+      author: Carlo Maria Curinga
+      subject: pin the LTS nodeJS tag
+      body: ""
+    - hash: cff4e53dd291b530c8ae73c779a6205fb6f1cdcb
+      author: curcuz
+      subject: sitch to alpine slim and do magic for build-essential
+      body: ""
+    - hash: 6d79a25590d79b9f61db43a827f29586ba6a375c
+      author: Lucian Buzzo
+      subject: Reword section on environment variables for additional clarity.
+      body: ""
+    - hash: ccff0907b3632a2b4bfbee7879df39795c019d3a
+      author: Tristan ROBET
+      subject: Precisions about the need to fill some env vars
+      body: ""

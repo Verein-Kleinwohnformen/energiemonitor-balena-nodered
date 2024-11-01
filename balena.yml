@@ -1,0 +1,24 @@
+name: balena-node-red
+type: sw.block
+description: >-
+  Custon Node-RED application for Verein Kleinwohnformen (Energiemonitor Project)
+assets:
+  repository:
+    type: blob.asset
+    data:
+      url: "https://github.com/balena-labs-projects/balena-node-red"
+  logo:
+    type: blob.asset
+    data:
+      url: >-
+        https://raw.githubusercontent.com/balena-labs-projects/balena-node-red/master/logo.png
+data:
+  applicationEnvironmentVariables:
+    - PORT: 80
+    - USERNAME: balena
+    - PASSWORD: balena
+    - ENCRIPTION_KEY: balena
+  defaultDeviceType: raspberry4-64
+  supportedDeviceTypes:
+    - raspberrypi4-64
+version: 2.5.2
