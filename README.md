@@ -21,6 +21,20 @@ Dieses Repository beinhaltet den Container mit dem "Betriebssystem" für NodeRED
 
 ### 3. Balena Setup
 
+#### Device Variablen
+Die meisten Variablen werden von der Flotte übernommen. Fürs einzelne Device sollten folgende Variablen gesetzt werden:
+- DEVICEID --> Wie das Device in der Datenbank erscheinen soll
+- NETATMO_ADDRESS (falls ein Netatmo-Gerät angeschlossen werden soll)
+- SHELLY_IP (falls ein Shelly-Gerät angeschlossen werden soll)
+- USERNAME (Für NodeRED Login, optional überschreiben)
+- PASSWORD (Für NodeRED Login, optional überschreiben)
+
+#### Device Settings
+Die Device Settings werden über die Flotte gesteuert, keine Einstellungen hier nötig
+
+#### Netzwerk Settings
+Je nachdem, ob das Gerät eine SIM-Karte haben soll oder nicht, müssen die [Balena Netzwerk-Einstellungen](https://docs.balena.io/reference/OS/network/) gemacht werden.
+
 
 ## Hintergrund
 
