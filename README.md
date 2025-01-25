@@ -1,5 +1,29 @@
 # Balena Image fürs Energiemonitor-Projekt
 
+Dieses Repository beinhaltet den Container mit dem "Betriebssystem" für NodeRED auf dem Energiemonitor und die Anleitung, wie man einen neuen Energeimonitor bauen kann.
+
+## Neuen Energiemonitor in Betrieb nehmen
+
+### 1. Hardware
+- [EdgeBox-RPI-200](https://www.mouser.ch/ProductDetail/713-102110772)
+- [SMA Antenne male WiFi](https://www.mouser.ch/ProductDetail/277-YE0032AA) nicht vergessen
+- Stromversorgung 12-36VDC
+- Optional: LTE Modul und SIM-Karte (z.B. [Digital Republic](https://digitalrepublic.ch/de/))
+
+- Einmalig: Raspberry Pi CM4 IO-Board
+
+### 2. Device Setup
+- EdgeBox aufschrauben und das Raspberry-Pi Board entnehmen
+- Raspberry Pi Board auf das IO-Board stecken
+- Einloggen auf [Balena Cloud](https://dashboard.balena-cloud.com/) -> Devices -> New Device
+- Raspberry Pi CM4 IO Board auswählen und den Instruktionen auf der rechten Seite folgen
+- Mit Balena Etcher das Image aufs Board flashen
+
+### 3. Balena Setup
+
+
+## Hintergrund
+
 Dies ist eine angepasste Version von [balena-node-red](https://github.com/balena-labs-projects/balena-node-red), das leider archiviert wurde und nicht mehr maintained wird. Mit diesem Repo hier, das im Prinzip nur Docker-Files und einige Einstellungen enthält, können wir aber jederzeit einen Node-RED-Container für die Energiemonitor-Flotte deployen. Wir können auch spezifische Einstellungen fürs Energiemonitor-Projekt hier direkt managen, indem z.B. das settings.js File angepasst wird.
 
 Dies ist nur der Container, der die Node-RED-Umgebung konfiguriert. Die Node-RED Flows sind noch nicht in diesem Repo und [können hier gefunden werden.](https://github.com/Verein-Kleinwohnformen/nodeRed)
