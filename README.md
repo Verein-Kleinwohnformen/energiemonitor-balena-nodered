@@ -50,6 +50,12 @@ Ctrl+D to exit
 - Das gleiche wiederholen mit 'cellular'
 - Gerät rebooten und testen, ob es sich über Mobilfunk verbindet und ob es einen "energiemonitor"-Hotspot macht.
 
+#### NodeRED konfigurieren
+- Im Gerätepanel gibt es einen Link zur "Public Device URL"
+- Login mit dem Default-Username `emon` und Passwort `KWF3mon` oder dem neuen Passwort, wenn es für dieses Gerät überschrieben wurde
+- Jetzt kannst du beginnen, die NodeRED-Flows für deinen Monitor zu schreiben. Die Template-Files und alles weitere dazu findest du im [NodeRED Repository](https://github.com/Verein-Kleinwohnformen/energiemonitor-nodered-flows), dieses klonst du am besten mit dem integrierten Git von NodeRED.
+
+
 ## Hintergrund
 
 Dies ist eine angepasste Version von [balena-node-red](https://github.com/balena-labs-projects/balena-node-red), das leider archiviert wurde und nicht mehr maintained wird. Mit diesem Repo hier, das im Prinzip nur Docker-Files und einige Einstellungen enthält, können wir aber jederzeit einen Node-RED-Container für die Energiemonitor-Flotte deployen. Wir können auch spezifische Einstellungen fürs Energiemonitor-Projekt hier direkt managen, indem z.B. das settings.js File angepasst wird.
