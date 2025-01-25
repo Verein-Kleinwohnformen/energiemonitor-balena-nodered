@@ -34,7 +34,21 @@ Die Device Settings werden über die Flotte gesteuert, keine Einstellungen hier 
 
 #### Netzwerk Settings
 Je nachdem, ob das Gerät eine SIM-Karte haben soll oder nicht, müssen die [Balena Netzwerk-Einstellungen](https://docs.balena.io/reference/OS/network/) gemacht werden.
-
+- Öffne ein Terminal zum Host-OS und gehe zum Ordner system-connections
+```
+cd ../../mnt/boot/system-connections
+```
+- Die zu kopierenden Files befinden sich in Ordner system-connections in diesem Repository.
+- Das File "cellular" brauchen wir nur, wenn ein LTE-Modul mit SIM-Karte verwendet wird
+- Das File "balena-hotspot" muss in jedem Fall kopiert werden.
+- Am einfachsten kopierst du einfach den Inhalt des Files in ein neues File in der Commandline:
+```
+cat > balena-hotspot
+<paste your file>
+Ctrl+D to exit
+```
+- Das gleiche wiederholen mit 'cellular'
+- Gerät rebooten und testen, ob es sich über Mobilfunk verbindet und ob es einen "energiemonitor"-Hotspot macht.
 
 ## Hintergrund
 
