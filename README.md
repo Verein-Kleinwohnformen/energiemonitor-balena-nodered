@@ -84,7 +84,9 @@ Dies ist nur der Container, der die Node-RED-Umgebung konfiguriert. Die Node-RED
 - Support nur für Raspi4 (Nur Edgebox RPI muss unterstützt werden)
 
 ### Angepassten Container auf die Flotte deployen
-Einfach dieses Repo klonen, und mit der Balena-CLi ('''balena push''') auf die Flotte laden.
+1. Dieses Repo klonen
+2. Mit '''docker-compose up --build''' den Container bauen
+3. Dann mit der Balena-CLi ('''balena push''') auf die Flotte laden
 
 # balena-node-red
 

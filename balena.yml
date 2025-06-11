@@ -21,4 +21,4 @@ data:
   defaultDeviceType: raspberry4-64
   supportedDeviceTypes:
     - raspberrypi4-64
-version: 2.5.2
+version: 2.6.0
