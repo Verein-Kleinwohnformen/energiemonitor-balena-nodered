@@ -17,9 +17,13 @@ services:
       - "ENCRIPTION_KEY=balena"
     cap_add:
       - SYS_RAWIO
+      - NET_ADMIN
+      - SYS_ADMIN
     devices:
       - "/dev/mem:/dev/mem"
       - "/dev/gpiomem:/dev/gpiomem"
       - "/dev/i2c-1:/dev/i2c-1"
+      - "/dev/ttyAMA0:/dev/ttyAMA0"
+      - "/dev/hci0:/dev/hci0"
     ports:
       - 80:80
