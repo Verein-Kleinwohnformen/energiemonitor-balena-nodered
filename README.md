@@ -46,6 +46,47 @@ Die meisten Variablen werden von der Flotte übernommen. Fürs einzelne Device s
 - USERNAME (Für NodeRED Login, optional überschreiben)
 - PASSWORD (Für NodeRED Login, optional überschreiben)
 
+##### BLE Scanner Variablen (für Sensirion Smart Gadgets)
+Der BLE Scanner Container scannt automatisch nach konfigurierten Bluetooth Low Energy Sensirion Smart Gadgets und publiziert die Werte über MQTT. 
+
+**🔍 Technischer Hintergrund:**
+Der Scanner nutzt die **Advertisement-basierte Methode** (passive Scanning) gemäss [Sensirion BLE Spezifikation](https://sensirion.github.io/ble-services/). Die Gadgets senden ihre Messwerte kontinuierlich in BLE Advertisement-Paketen (Manufacturer Data, Company ID 0x06D5). **Keine aktive Verbindung notwendig** für Temperatur-, Feuchte-, CO2- und VOC-Werte!
+
+**Erforderliche Variablen:**
+- `HUMI_GADGETS` - MAC-Adressen der Humidity/Temperature Gadgets (komma-getrennt, z.B. `e4:1c:4c:00:d9:24,cb:8f:75:a9:72:9f`)
+- `HUMI_NAMES` - Namen für die HUMI Gadgets (komma-getrennt, z.B. `bottom,temp_bathroom`)
+- `HUMI_TEMP_OFFSET` - Temperatur-Offsets in °C (komma-getrennt, z.B. `0,0`)
+- `CO2_GADGETS` - MAC-Adressen der CO2 Gadgets (komma-getrennt, z.B. `dc:e6:4d:5e:e1:f6`)
+- `CO2_NAMES` - Namen für die CO2 Gadgets (komma-getrennt, z.B. `top`)
+- `CO2_TEMP_OFFSET` - Temperatur-Offset in °C (komma-getrennt, z.B. `0`)
+- `AIQ_GADGETS` - MAC-Adressen der Air Quality/VOC Gadgets (komma-getrennt, z.B. `e9:da:d0:6c:09:bf`)
+- `AIQ_NAMES` - Namen für die AQI Gadgets (komma-getrennt, z.B. `living_room`)
+- `AIQ_TEMP_OFFSET` - Temperatur-Offset in °C (komma-getrennt, z.B. `0`)
+
+**Optionale Variablen (mit Defaults):**
+- `DEBUG_MODE` - Debug-Logging aktivieren (Standard: `1`)
+- `SCAN_DURATION` - Dauer eines BLE-Scans in Sekunden (Standard: `15` - optimiert für Advertisement-Empfang)
+- `HUMI_SCAN_INTERVAL` - Scan-Interval für HUMI Gadgets in Sekunden (Standard: `600` = 10 Minuten)
+- `CO2_SCAN_INTERVAL` - Scan-Interval für CO2 Gadgets in Sekunden (Standard: `180` = 3 Minuten)
+- `AIQ_SCAN_INTERVAL` - Scan-Interval für AQI Gadgets in Sekunden (Standard: `180` = 3 Minuten)
+- `CONNECTION_TIMEOUT` - Timeout für GATT-Verbindungen in Sekunden (Standard: `10` - nur für Batterie-Abfragen)
+- `MAX_RETRIES` - Anzahl Wiederholungen bei Scan-Fehlern (Standard: `2`)
+- `RETRY_MAX_DURATION` - Max. Dauer für Wiederholungen in Sekunden (Standard: `60`)
+- `MQTT_BROKER` - MQTT Broker Hostname (Standard: `mqtt`)
+- `MQTT_PORT` - MQTT Broker Port (Standard: `1883`)
+
+**Wichtig:** 
+- Leere Werte sind erlaubt (z.B. wenn keine CO2 Gadgets vorhanden: `CO2_GADGETS=`, `CO2_NAMES=`, `CO2_TEMP_OFFSET=`)
+- Die Anzahl der MACs, Namen und Offsets muss pro Gadget-Typ übereinstimmen
+- MAC-Adressen können gross oder klein geschrieben werden, Trennzeichen ist `:`
+- Bei Debug-Modus (`DEBUG_MODE=1`) werden alle entdeckten Sensirion-Geräte angezeigt
+
+**MQTT Topics:**
+Die Werte werden automatisch auf folgende MQTT Topics publiziert:
+- HUMI: `energiemonitor/humi/{name}/temperature`, `/humidity`, `/battery`, `/rssi`
+- CO2: `energiemonitor/co2/{name}/co2`, `/temperature`, `/rssi`
+- AQI: `energiemonitor/aqi/{name}/voc`, `/temperature`, `/humidity`, `/rssi`
+
 #### Device Settings
 Die Device Settings werden über die Flotte gesteuert, keine Einstellungen hier nötig
 

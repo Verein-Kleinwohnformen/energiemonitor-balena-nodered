@@ -1,6 +1,11 @@
-version: '2'
+version: 2
 volumes:
     resin-data:
+    mqtt-data:
+    mqtt-config:
+networks:
+  internal:
+    driver: bridge
 services:
   node-red:
     build: ./node-red
@@ -24,6 +29,50 @@ services:
       - "/dev/gpiomem:/dev/gpiomem"
       - "/dev/i2c-1:/dev/i2c-1"
       - "/dev/ttyAMA0:/dev/ttyAMA0"
-      - "/dev/hci0:/dev/hci0"
     ports:
       - 80:80
+
+  mqtt:
+    image: eclipse-mosquitto:2.0
+    restart: always
+    networks:
+      - internal
+    ports:
+      - "1883:1883"
+    volumes:
+      - mqtt-data:/mosquitto/data
+      - mqtt-config:/mosquitto/config
+    command: mosquitto -c /mosquitto-no-auth.conf
+
+  ble-scanner:
+    build: ./ble-scanner
+    restart: always
+    privileged: true
+    network_mode: host
+    labels:
+      io.balena.features.dbus: '1'
+    cap_add:
+      - NET_ADMIN
+      - SYS_ADMIN
+    devices:
+      - "/dev/hci0:/dev/hci0"
+    environment:
+      - DBUS_SYSTEM_BUS_ADDRESS=unix:path=/host/run/dbus/system_bus_socket
+      - HUMI_GADGETS
+      - CO2_GADGETS
+      - AIQ_GADGETS
+      - HUMI_NAMES
+      - CO2_NAMES
+      - AIQ_NAMES
+      - HUMI_TEMP_OFFSET
+      - CO2_TEMP_OFFSET
+      - AIQ_TEMP_OFFSET
+      - MQTT_BROKER=localhost
+      - MQTT_PORT=1883
+      - HUMI_SCAN_INTERVAL=600
+      - CO2_SCAN_INTERVAL=180
+      - AIQ_SCAN_INTERVAL=180
+      - DEBUG_MODE=1
+      - CONNECTION_TIMEOUT=30
+      - MAX_RETRIES=3
+      - RETRY_MAX_DURATION=120

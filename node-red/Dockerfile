@@ -3,7 +3,7 @@
 ###
 FROM debian:bookworm-20250407 as build
 
-# Install Node.js 22 and build dependencies
+# Install Node.js 20 and build dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     ca-certificates \
@@ -11,7 +11,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     python3 \
     && curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg \
-    && echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_22.x nodistro main" | tee /etc/apt/sources.list.d/nodesource.list \
+    && echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_20.x nodistro main" | tee /etc/apt/sources.list.d/nodesource.list \
     && apt-get update && apt-get install -y --no-install-recommends nodejs \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
@@ -23,10 +23,13 @@ COPY ./app/package-lock.json package-lock.json
 RUN npm install -g --production --unsafe-perm \
       node-red \
       node-red-contrib-balena \
-      node-red-contrib-cron-plus \
       node-red-contrib-modbus \
+      node-red-contrib-isonline \
+      node-red-contrib-cron-plus \
       node-red-contrib-shelly \
+      node-red-contrib-aggregator \
       node-red-node-serialport \
+      @bitpoolos/edge-modbus \
       @vereinkleinwohnformen/node-red-energiemonitor \
     && npm install --unsafe-perm --production && npm cache clean --force
 
@@ -35,13 +38,13 @@ RUN npm install -g --production --unsafe-perm \
 ###
 FROM debian:bookworm-20250407
 
-# Install Node.js 22 and runtime dependencies
+# Install Node.js 20 and runtime dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     ca-certificates \
     gnupg \
     && curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg \
-    && echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_22.x nodistro main" | tee /etc/apt/sources.list.d/nodesource.list \
+    && echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_20.x nodistro main" | tee /etc/apt/sources.list.d/nodesource.list \
     && apt-get update && apt-get install -y --no-install-recommends \
     nodejs \
     python3-dev \
@@ -55,10 +58,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN npm install -g --production --unsafe-perm \
     node-red \
     node-red-contrib-balena \
-    node-red-contrib-cron-plus \
     node-red-contrib-modbus \
+    node-red-contrib-isonline \
+    node-red-contrib-cron-plus \
     node-red-contrib-shelly \
+    node-red-contrib-aggregator \
     node-red-node-serialport \
+    @bitpoolos/edge-modbus \
     @vereinkleinwohnformen/node-red-energiemonitor
 
 # Defines our working directory in container
