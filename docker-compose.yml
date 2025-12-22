@@ -58,6 +58,7 @@ services:
       - "/dev/hci0:/dev/hci0"
     environment:
       - DBUS_SYSTEM_BUS_ADDRESS=unix:path=/host/run/dbus/system_bus_socket
+      # Device configuration
       - HUMI_GADGETS
       - CO2_GADGETS
       - AIQ_GADGETS
@@ -67,12 +68,13 @@ services:
       - HUMI_TEMP_OFFSET
       - CO2_TEMP_OFFSET
       - AIQ_TEMP_OFFSET
+      # MQTT settings
       - MQTT_BROKER=localhost
       - MQTT_PORT=1883
-      - HUMI_SCAN_INTERVAL=600
-      - CO2_SCAN_INTERVAL=180
-      - AIQ_SCAN_INTERVAL=180
-      - DEBUG_MODE=1
-      - CONNECTION_TIMEOUT=30
-      - MAX_RETRIES=3
-      - RETRY_MAX_DURATION=120
+      # Optional: device-specific scan intervals (seconds)
+      - CO2_SCAN_INTERVAL
+      - AIQ_SCAN_INTERVAL
+      - HUMI_SCAN_INTERVAL
+      # Optional: scan duration and debug level
+      - SCAN_DURATION
+      - DEBUG_LEVEL

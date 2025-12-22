@@ -1,751 +1,796 @@
 #!/usr/bin/env python3
 """
-BLE Scanner for Sensirion Smart Gadgets
-Scans BLE devices and publishes sensor data to MQTT broker
+BLE Scanner for Sensirion Smart Gadgets - Advertisement Data Parsing
 
-Based on Sensirion BLE specification:
-https://sensirion.github.io/ble-services/
+Scans for Sensirion BLE devices and parses sensor data from advertisements.
+Uses device configuration from environment variables to filter and name sensors.
 
-KEY FINDINGS FROM RESEARCH:
-1. Sensirion gadgets broadcast live data in MANUFACTURER DATA of BLE advertisements
-2. No connection needed for basic sensor readings (T, H, CO2, VOC)
-3. Connection only needed for battery level and history download
-4. Sample types encode which sensors are present (Type 3, 4, 6, 8, 10, etc.)
-5. Company ID is 0x06D5 (Sensirion)
+Supports:
+- SHT3x gadgets (type 4)
+- SHT4x gadgets (type 6)
+- MyCO2 gadgets (type 8)
+
+For complete documentation, see README.md
 """
 
 import asyncio
 import os
 import sys
-import time
-import logging
-from typing import List, Dict, Optional, Tuple, Set
-from dataclasses import dataclass
+import random
+from typing import Optional, Dict, List
+from dataclasses import dataclass, field
 import struct
+import logging
+from datetime import datetime
+import json
+import math
+import time
 
-from bleak import BleakClient, BleakScanner, BleakError
+from bleak import BleakScanner
 from bleak.backends.device import BLEDevice
 from bleak.backends.scanner import AdvertisementData
 import paho.mqtt.client as mqtt
 
 # ============================================================================
-# CONFIGURATION - Editable defaults (overridden by environment variables)
+# CONFIGURATION
 # ============================================================================
 
-# Sensirion Company ID
+# Sensirion Company ID (for device discovery)
 SENSIRION_COMPANY_ID = 0x06D5
 
-# BLE Service and Characteristic UUIDs (from official spec)
-BLE_UUID_BATTERY_SERVICE = "0000180f-0000-1000-8000-00805f9b34fb"
-BLE_UUID_BATTERY = "00002a19-0000-1000-8000-00805f9b34fb"
+# Timing
+DEFAULT_SCAN_DURATION = 10.0
+DEFAULT_CO2_SCAN_INTERVAL = 60  # CO2: 1 minute
+DEFAULT_AIQ_SCAN_INTERVAL = 60  # AQI: 1 minute
+DEFAULT_HUMI_SCAN_INTERVAL = 300  # HUMI: 5 minutes
 
-# Sensirion Service UUIDs - for service discovery only
-BLE_UUID_TEMP_SERVICE = "00002234-b38d-4985-720e-0f993a68ee41"
-BLE_UUID_HUM_SERVICE = "00001234-b38d-4985-720e-0f993a68ee41"
-BLE_UUID_CO2_SERVICE = "00007000-b38d-4985-720e-0f993a68ee41"
-BLE_UUID_VOC_SERVICE = "00005588-b38d-4985-720e-0f993a68ee41"
-
-# Sensirion service UUIDs for discovery check
-SENSIRION_SERVICE_UUIDS = [
-    BLE_UUID_TEMP_SERVICE.lower(),
-    BLE_UUID_HUM_SERVICE.lower(),
-    BLE_UUID_CO2_SERVICE.lower(),
-    BLE_UUID_VOC_SERVICE.lower()
-]
-
-# Advertisement sample types (from https://sensirion.github.io/ble-services/#/live-data)
-# NOTE: Actual sizes observed from real devices differ from spec!
-SAMPLE_TYPES = {
-    3: {'size': 8, 'signals': ['T', 'H', 'VOC']},        # AQ Minion - actual: 2 floats + uint16 VOC
-    4: {'size': 8, 'signals': ['T', 'H']},                # SHT3x
-    6: {'size': 8, 'signals': ['T', 'H']},                # SHT40/SHT43
-    8: {'size': 6, 'signals': ['T', 'H', 'CO2']},        # MyCO2 Gadget - actual: 2 uint16 (T+H) + uint16 CO2
-    10: {'size': 10, 'signals': ['T', 'H', 'CO2']},       # MyCO2 Gadget (CO2 sensors)
-}
-
-# Timing constants
-DEFAULT_HUMI_SCAN_INTERVAL = 600  # 10 minutes
-DEFAULT_CO2_SCAN_INTERVAL = 180   # 3 minutes
-DEFAULT_AIQ_SCAN_INTERVAL = 180   # 3 minutes
-DEFAULT_SCAN_DURATION = 15        # seconds - longer for passive scanning
-DEFAULT_CONNECTION_TIMEOUT = 10   # seconds - only for battery reads
-DEFAULT_MAX_RETRIES = 2           # reduced since we're using advertisements
-DEFAULT_RETRY_MAX_DURATION = 60   # seconds - shorter for passive scans
-DISCOVERY_INTERVAL = 600          # 10 minutes
-INITIAL_RETRY_DELAY = 2           # seconds
-MAX_RETRY_DELAY = 10              # seconds
-
-# MQTT constants
+# MQTT
 DEFAULT_MQTT_BROKER = "mqtt"
 DEFAULT_MQTT_PORT = 1883
-MQTT_QOS = 0
+DEFAULT_MQTT_TOPIC_PREFIX = "energiemonitor/ble"
 
 # ============================================================================
-# DATA STRUCTURES
+# DATA CLASSES
 # ============================================================================
 
 @dataclass
-class GadgetConfig:
-    """Configuration for a single BLE gadget"""
-    mac: str
+class DeviceConfig:
+    """Configuration for a specific device."""
+    address: str
     name: str
     temp_offset: float
-    gadget_type: str  # 'humi', 'co2', 'aqi'
+    device_type: str  # 'humi', 'co2', 'aiq'
+
 
 @dataclass
 class SensorReading:
-    """Sensor reading data"""
+    """Container for sensor readings from a Sensirion device."""
+    address: str
+    name: str
+    device_type: str
+    rssi: Optional[int] = None
     temperature: Optional[float] = None
     humidity: Optional[float] = None
-    battery: Optional[int] = None
     co2: Optional[int] = None
     voc: Optional[int] = None
-    rssi: Optional[int] = None
+    battery: Optional[int] = None
+    timestamp: str = field(default_factory=lambda: datetime.utcnow().isoformat())
+    
+    def to_dict(self) -> Dict:
+        """Convert to dictionary for JSON serialization."""
+        return {
+            'address': self.address,
+            'name': self.name,
+            'rssi': self.rssi,
+            'temperature': self.temperature,
+            'humidity': self.humidity,
+            'co2': self.co2,
+            'voc': self.voc,
+            'battery': self.battery,
+            'timestamp': self.timestamp
+        }
 
 # ============================================================================
-# GLOBAL CONFIGURATION
+# HUMIDITY CORRECTION FUNCTIONS
 # ============================================================================
 
-class Config:
-    """Global configuration loaded from environment variables"""
+def saturation_vapor_pressure(temp_celsius: float) -> float:
+    """
+    Calculate saturation vapor pressure using Magnus formula.
     
-    def __init__(self):
-        self.debug_mode = self._get_bool_env('DEBUG_MODE', True)
+    Args:
+        temp_celsius: Temperature in degrees Celsius
         
-        # Setup logging
-        log_level = logging.DEBUG if self.debug_mode else logging.WARNING
-        logging.basicConfig(
-            level=log_level,
-            format='%(asctime)s [%(levelname)s] %(message)s',
-            datefmt='%Y-%m-%d %H:%M:%S',
-            force=True
-        )
-        self.logger = logging.getLogger(__name__)
-        
-        # Suppress verbose bleak/dbus logging - must be after basicConfig
-        for logger_name in ['bleak', 'bleak.backends', 'bleak.backends.bluezdbus', 'dbus_fast']:
-            logging.getLogger(logger_name).setLevel(logging.WARNING)
-            logging.getLogger(logger_name).propagate = False
-        
-        # MQTT configuration
-        self.mqtt_broker = os.getenv('MQTT_BROKER', DEFAULT_MQTT_BROKER)
-        self.mqtt_port = int(os.getenv('MQTT_PORT', DEFAULT_MQTT_PORT))
-        
-        # Timing configuration
-        self.humi_scan_interval = int(os.getenv('HUMI_SCAN_INTERVAL', DEFAULT_HUMI_SCAN_INTERVAL))
-        self.co2_scan_interval = int(os.getenv('CO2_SCAN_INTERVAL', DEFAULT_CO2_SCAN_INTERVAL))
-        self.aiq_scan_interval = int(os.getenv('AIQ_SCAN_INTERVAL', DEFAULT_AIQ_SCAN_INTERVAL))
-        self.scan_duration = float(os.getenv('SCAN_DURATION', DEFAULT_SCAN_DURATION))
-        self.connection_timeout = int(os.getenv('CONNECTION_TIMEOUT', DEFAULT_CONNECTION_TIMEOUT))
-        self.max_retries = int(os.getenv('MAX_RETRIES', DEFAULT_MAX_RETRIES))
-        self.retry_max_duration = int(os.getenv('RETRY_MAX_DURATION', DEFAULT_RETRY_MAX_DURATION))
-        
-        # Parse gadget configurations
-        self.humi_gadgets = self._parse_gadgets('HUMI')
-        self.co2_gadgets = self._parse_gadgets('CO2')
-        self.aiq_gadgets = self._parse_gadgets('AIQ')
-        
-        self.logger.info("Configuration loaded successfully")
-        self.logger.debug(f"HUMI gadgets: {len(self.humi_gadgets)}")
-        self.logger.debug(f"CO2 gadgets: {len(self.co2_gadgets)}")
-        self.logger.debug(f"AQI gadgets: {len(self.aiq_gadgets)}")
+    Returns:
+        Saturation vapor pressure in hPa (hectopascals)
+    """
+    return 6.112 * math.exp((17.67 * temp_celsius) / (temp_celsius + 243.5))
+
+
+def absolute_humidity(temp_celsius: float, relative_humidity_percent: float) -> float:
+    """
+    Calculate absolute humidity from temperature and relative humidity.
     
-    def _get_bool_env(self, key: str, default: bool) -> bool:
-        """Get boolean environment variable"""
-        val = os.getenv(key, str(int(default)))
-        return val.strip() in ('1', 'true', 'True', 'yes', 'Yes')
+    Args:
+        temp_celsius: Temperature in degrees Celsius
+        relative_humidity_percent: Relative humidity in percent (0-100)
+        
+    Returns:
+        Absolute humidity in g/m³
+    """
+    # Saturation vapor pressure at given temperature
+    e_s = saturation_vapor_pressure(temp_celsius)
     
-    def _parse_gadgets(self, prefix: str) -> List[GadgetConfig]:
-        """Parse gadget configuration from environment variables"""
-        macs_str = os.getenv(f'{prefix}_GADGETS', '').strip()
-        names_str = os.getenv(f'{prefix}_NAMES', '').strip()
-        offsets_str = os.getenv(f'{prefix}_TEMP_OFFSET', '').strip()
-        
-        # Handle empty configurations
-        if not macs_str:
-            return []
-        
-        macs = [m.strip().lower() for m in macs_str.split(',') if m.strip()]
-        names = [n.strip() for n in names_str.split(',') if n.strip()]
-        offsets = [float(o.strip()) for o in offsets_str.split(',') if o.strip()]
-        
-        # Validation
-        if len(macs) != len(names):
-            raise ValueError(
-                f"{prefix}: Number of MACs ({len(macs)}) != Number of names ({len(names)})"
-            )
-        if len(macs) != len(offsets):
-            raise ValueError(
-                f"{prefix}: Number of MACs ({len(macs)}) != Number of offsets ({len(offsets)})"
-            )
-        
-        # Validate MAC addresses
-        for mac in macs:
-            if not self._is_valid_mac(mac):
-                raise ValueError(f"Invalid MAC address: {mac}")
-        
-        gadget_type = prefix.lower()
-        return [
-            GadgetConfig(mac=mac, name=name, temp_offset=offset, gadget_type=gadget_type)
-            for mac, name, offset in zip(macs, names, offsets)
-        ]
+    # Actual vapor pressure
+    e = (relative_humidity_percent / 100.0) * e_s
     
-    def _is_valid_mac(self, mac: str) -> bool:
-        """Validate MAC address format"""
-        import re
-        pattern = r'^([0-9a-f]{2}:){5}[0-9a-f]{2}$'
-        return bool(re.match(pattern, mac))
+    # Absolute humidity in g/m³
+    # Formula: AH = (2165.7 * e) / (T_kelvin)
+    temp_kelvin = temp_celsius + 273.15
+    ah = (2165.7 * e) / temp_kelvin
+    
+    return ah
+
+
+def relative_humidity_from_absolute(temp_celsius: float, absolute_humidity_g_m3: float) -> float:
+    """
+    Calculate relative humidity from absolute humidity at a given temperature.
+    
+    Args:
+        temp_celsius: Temperature in degrees Celsius
+        absolute_humidity_g_m3: Absolute humidity in g/m³
+        
+    Returns:
+        Relative humidity in percent (0-100)
+    """
+    # Convert absolute humidity back to vapor pressure
+    temp_kelvin = temp_celsius + 273.15
+    e = (absolute_humidity_g_m3 * temp_kelvin) / 2165.7
+    
+    # Saturation vapor pressure at given temperature
+    e_s = saturation_vapor_pressure(temp_celsius)
+    
+    # Relative humidity
+    rh = (e / e_s) * 100.0
+    
+    return rh
+
+
+def correct_humidity(temp_raw: float, rh_raw: float, temp_correction: float) -> tuple:
+    """
+    Correct relative humidity based on temperature correction.
+    
+    Assumes absolute humidity stays constant when correcting for sensor box heat.
+    This corrects for the temperature difference between inside the sensor box
+    (where raw values are measured) and outside (actual ambient conditions).
+    
+    Args:
+        temp_raw: Raw temperature reading (inside box) in °C
+        rh_raw: Raw relative humidity reading (inside box) in %
+        temp_correction: Temperature correction to apply in K (typically negative)
+        
+    Returns:
+        Tuple of (corrected_temperature, corrected_humidity)
+    """
+    # Calculate absolute humidity from raw values (this stays constant)
+    ah = absolute_humidity(temp_raw, rh_raw)
+    
+    # Apply temperature correction
+    temp_corrected = temp_raw + temp_correction
+    
+    # Calculate relative humidity at corrected temperature
+    rh_corrected = relative_humidity_from_absolute(temp_corrected, ah)
+    
+    return temp_corrected, rh_corrected
 
 # ============================================================================
-# BLE SCANNER
+# ADVERTISEMENT DATA PARSING
 # ============================================================================
 
-class BLEScanner:
-    """Handles BLE scanning and data reading using advertisements"""
+def parse_sensirion_advertisement(raw_data: bytes, logger=None, debug_level=0) -> Optional[Dict]:
+    """
+    Parse Sensirion advertisement data.
     
-    def __init__(self, config: Config):
-        self.config = config
-        self.logger = config.logger
-        # Cache for discovered devices
-        self.advertisement_cache: Dict[str, Tuple[BLEDevice, AdvertisementData]] = {}
+    Based on https://github.com/akx/sensirion-ble/blob/main/src/sensirion_ble/converters.py
     
-    def _parse_manufacturer_data(self, mfr_data: bytes) -> Optional[Dict]:
-        """Parse Sensirion manufacturer data from advertisement
+    Advertisement format:
+    - Bytes 0-1: Sample type (0x0004, 0x0006, 0x0008, etc.)
+    - Bytes 2-3: Device ID
+    - Bytes 4+: Sensor data (varies by type)
+    
+    Returns dict with parsed sensor values or None if invalid.
+    """
+    if len(raw_data) < 4:
+        return None
+    
+    # Get sample type (first 2 bytes)
+    sample_type = raw_data[0:2]
+    device_id = raw_data[2:4].hex().upper()
+    
+    # Log raw data for debugging
+    if logger and debug_level >= 1:
+        logger.info(f"=== RAW ADVERTISEMENT DATA DEBUG ===")
+        logger.info(f"  Full raw data ({len(raw_data)} bytes): {raw_data.hex()}")
+        logger.info(f"  Sample type bytes: {sample_type.hex()} (decimal: {int.from_bytes(sample_type, 'big')})")
+        logger.info(f"  Device ID: {device_id}")
         
-        Format (from spec):
-        Bytes 0-1: Company ID (0x06D5 little endian = 0xD5, 0x06)
-        Byte 2: Advertisement type (0x00 for sensor data)
-        Byte 3: Sample type (3, 4, 6, 8, 10, etc.)
-        Bytes 4-5: Device ID (last 2 bytes of MAC)
-        Bytes 6+: Sample data (varies by type)
-        """
-        # Debug: Show raw data
-        self.logger.debug(f"Raw mfr_data: {len(mfr_data)} bytes = {mfr_data.hex()}")
-        
-        if len(mfr_data) < 2:
-            self.logger.debug(f"Manufacturer data too short: {len(mfr_data)} bytes")
+        # Log all data bytes
+        if len(raw_data) > 4:
+            data_bytes = raw_data[4:]
+            logger.info(f"  Data bytes ({len(data_bytes)}): {data_bytes.hex()}")
+            
+            # Try parsing as different integer formats
+            if len(data_bytes) >= 2:
+                logger.info(f"  First 2 bytes as uint16 LE: {struct.unpack('<H', data_bytes[0:2])[0]}")
+                logger.info(f"  First 2 bytes as uint16 BE: {struct.unpack('>H', data_bytes[0:2])[0]}")
+            if len(data_bytes) >= 4:
+                logger.info(f"  First 4 bytes as uint16s LE: {struct.unpack('<HH', data_bytes[0:4])}")
+                logger.info(f"  First 4 bytes as uint16s BE: {struct.unpack('>HH', data_bytes[0:4])}")
+            if len(data_bytes) >= 6:
+                logger.info(f"  First 6 bytes as uint16s LE: {struct.unpack('<HHH', data_bytes[0:6])}")
+                logger.info(f"  First 6 bytes as uint16s BE: {struct.unpack('>HHH', data_bytes[0:6])}")
+            if len(data_bytes) >= 8:
+                logger.info(f"  First 8 bytes as uint16s LE: {struct.unpack('<HHHH', data_bytes[0:8])}")
+                logger.info(f"  First 8 bytes as uint16s BE: {struct.unpack('>HHHH', data_bytes[0:8])}")
+    
+    result = {'device_id': device_id}
+    
+    # SHT3x gadgets (type 4)
+    if sample_type == b'\x00\x04':
+        if len(raw_data) < 8:
             return None
+        temp_ticks, humidity_ticks = struct.unpack("<HH", raw_data[4:8])
         
-        # Company ID is already stripped by Bleak - we receive data starting at byte 2
-        # So we need to adjust:
-        # Byte 0: Advertisement type
-        # Byte 1: Sample type
-        # Bytes 2-3: Device ID (2 bytes)
-        # Bytes 4+: Sample data
+        if logger and debug_level >= 1:
+            logger.info(f"  >>> SHT3x Device Detected <<<")
+            logger.info(f"  Temperature ticks: {temp_ticks}")
+            logger.info(f"  Humidity ticks: {humidity_ticks}")
         
-        adv_type = mfr_data[0]
-        sample_type = mfr_data[1]
+        # Conversion: T = -45 + (175.0 * ticks) / (2^16 - 1)
+        #             RH = (100.0 * ticks) / (2^16 - 1)
+        temp = -45 + ((175.0 * temp_ticks) / (2**16 - 1))
+        humidity = (100.0 * humidity_ticks) / (2**16 - 1)
+        result['temperature'] = round(temp, 1)
+        result['humidity'] = round(humidity, 1)
+        result['sensor_type'] = 'SHT3x'
         
-        self.logger.debug(f"Parsed header: adv_type={adv_type:#04x}, sample_type={sample_type}")
-        
-        if adv_type != 0x00:  # Only process sensor data advertisements
-            self.logger.debug(f"Non-sensor advertisement type: {adv_type:#04x}")
-            return None
-        
-        if sample_type not in SAMPLE_TYPES:
-            self.logger.debug(f"Unknown sample type: {sample_type}")
-            return None
-        
-        sample_info = SAMPLE_TYPES[sample_type]
-        # Total size = adv_type (1) + sample_type (1) + device_id (2) + sample_data
-        expected_total = 4 + sample_info['size']
-        
-        self.logger.debug(f"Sample type {sample_type}: expecting {expected_total} bytes total ({sample_info['size']} data bytes), got {len(mfr_data)} bytes")
-        
-        if len(mfr_data) < expected_total:
-            self.logger.debug(f"Incomplete data for sample type {sample_type}: {len(mfr_data)} < {expected_total}")
-            # Try to parse anyway if we have at least the header
-            if len(mfr_data) < 4:
-                return None
-            # Adjust to actual available data
-            sample_data = mfr_data[4:]
-            self.logger.debug(f"Attempting to parse {len(sample_data)} bytes of sample data (expected {sample_info['size']})")
-        else:
-            # Extract sample data
-            sample_data = mfr_data[4:expected_total]
-        
-        result = {'sample_type': sample_type, 'signals': sample_info['signals']}
-        
-        # Parse based on sample type (all values are little-endian)
-        try:
-            if sample_type == 3:  # T_RH_VOC (8 bytes: uint16 temp, uint16 hum, uint16 voc, uint16 reserved)
-                if len(sample_data) < 6:
-                    self.logger.debug(f"Type 3: insufficient data ({len(sample_data)} < 6)")
-                    return None
-                # Parse as uint16 values with scale factors (based on Sensirion format)
-                # Temperature: value / 200.0 (degrees C)
-                # Humidity: value / 100.0 (percent)
-                # VOC: raw value (ppb or index)
-                temp_raw, hum_raw, voc_raw = struct.unpack('<HHH', sample_data[:6])
-                result['temperature'] = temp_raw / 200.0
-                result['humidity'] = hum_raw / 100.0
-                result['voc'] = voc_raw
-                self.logger.debug(f"Type 3 parsed: T={result['temperature']:.2f}°C (raw={temp_raw}), H={result['humidity']:.1f}% (raw={hum_raw}), VOC={voc_raw}")
-            elif sample_type in [4, 6]:  # T_RH (8 bytes: 2 floats)
-                if len(sample_data) < 8:
-                    self.logger.debug(f"Type {sample_type}: insufficient data ({len(sample_data)} < 8)")
-                    return None
-                temp, hum = struct.unpack('<ff', sample_data[:8])
-                result['temperature'] = temp
-                result['humidity'] = hum
-                self.logger.debug(f"Type {sample_type} parsed: T={temp:.2f}°C, H={hum:.1f}%")
-            elif sample_type == 8:  # T_RH_CO2 (6 bytes: uint16 temp, uint16 hum, uint16 co2)
-                if len(sample_data) < 6:
-                    self.logger.debug(f"Type 8: insufficient data ({len(sample_data)} < 6)")
-                    return None
-                # Parse as uint16 values with scale factors
-                # Temperature: value / 200.0 (degrees C)
-                # Humidity: value / 100.0 (percent)
-                # CO2: raw value (ppm)
-                temp_raw, hum_raw, co2 = struct.unpack('<HHH', sample_data[:6])
-                result['temperature'] = temp_raw / 200.0
-                result['humidity'] = hum_raw / 100.0
-                result['co2'] = co2
-                self.logger.debug(f"Type 8 parsed: T={result['temperature']:.2f}°C (raw={temp_raw}), H={result['humidity']:.1f}% (raw={hum_raw}), CO2={co2}ppm")
-            elif sample_type == 10:  # T_RH_CO2 alt (10 bytes: 2 floats + uint16 co2)
-                if len(sample_data) < 10:
-                    self.logger.debug(f"Type 10: insufficient data ({len(sample_data)} < 10)")
-                    return None
-                temp, hum, co2 = struct.unpack('<ffH', sample_data[:10])
-                result['temperature'] = temp
-                result['humidity'] = hum
-                result['co2'] = co2
-                self.logger.debug(f"Type 10 parsed: T={temp:.2f}°C, H={hum:.1f}%, CO2={co2}ppm")
-        except struct.error as e:
-            self.logger.debug(f"Struct unpack error for sample type {sample_type}: {e}")
-            return None
+        if logger and debug_level >= 1:
+            logger.info(f"  Temperature: {temp:.2f}°C")
+            logger.info(f"  Humidity: {humidity:.2f}%")
         
         return result
     
-    async def scan_for_devices(self, target_macs: Set[str]) -> Dict[str, Tuple[BLEDevice, AdvertisementData]]:
-        """Scan for BLE devices and return those matching target MACs
+    # AQI/VOC gadgets (type 3) - Sensirion Air Quality Sensor
+    elif sample_type == b'\x00\x03':
+        if len(raw_data) < 12:
+            return None
+        temp_ticks, humidity_ticks, voc, pm25 = struct.unpack("<HHHH", raw_data[4:12])
         
-        Returns dict of {mac: (device, advertisement_data)}
-        """
-        self.logger.debug(f"Scanning for {len(target_macs)} device(s) for {self.config.scan_duration}s...")
+        if logger and debug_level >= 1:
+            logger.info(f"  >>> AQI/VOC Device Detected (Type 3) <<<")
+            logger.info(f"  Temperature ticks: {temp_ticks}")
+            logger.info(f"  Humidity ticks: {humidity_ticks}")
+            logger.info(f"  VOC raw value: {voc}")
+            logger.info(f"  PM2.5/Extra raw value: {pm25}")
         
-        found_devices = {}
+        # Conversion: T = -45 + (175.0 * ticks) / (2^16 - 1)
+        #             RH = (100.0 * ticks) / (2^16 - 1)
+        #             VOC = transmitted value (index)
+        temp = -45 + ((175.0 * temp_ticks) / (2**16 - 1))
+        humidity = (100.0 * humidity_ticks) / (2**16 - 1)
+        result['temperature'] = round(temp, 1)
+        result['humidity'] = round(humidity, 1)
+        result['voc'] = voc
+        result['sensor_type'] = 'AQI'
         
-        try:
-            # Scan for devices with advertisement data
-            devices = await BleakScanner.discover(
-                timeout=self.config.scan_duration,
-                return_adv=True
-            )
-            
-            # Check each discovered device
-            for address, (device, adv_data) in devices.items():
-                mac = address.lower()
-                if mac in target_macs:
-                    found_devices[mac] = (device, adv_data)
-                    self.logger.debug(f"Found target device: {mac} (RSSI={adv_data.rssi}dBm)")
-            
-            # Update cache
-            self.advertisement_cache.update(found_devices)
-            
-        except Exception as e:
-            self.logger.error(f"Scan error: {e}")
+        if logger and debug_level >= 1:
+            logger.info(f"  Temperature: {temp:.2f}°C")
+            logger.info(f"  Humidity: {humidity:.2f}%")
+            logger.info(f"  VOC: {voc} index")
         
-        return found_devices
+        return result
     
-    def read_from_advertisement(self, gadget: GadgetConfig, adv_data: AdvertisementData) -> Optional[SensorReading]:
-        """Read sensor data from advertisement manufacturer data"""
-        
-        # Check for Sensirion manufacturer data
-        if SENSIRION_COMPANY_ID not in adv_data.manufacturer_data:
-            self.logger.debug(f"No Sensirion manufacturer data for {gadget.name} ({gadget.mac})")
+    # SHT4x gadgets (type 6)
+    elif sample_type == b'\x00\x06':
+        if len(raw_data) < 8:
             return None
+        temp_ticks, humidity_ticks = struct.unpack("<HH", raw_data[4:8])
         
-        self.logger.debug(f"Reading advertisement from {gadget.name} ({gadget.mac})")
-        mfr_data = adv_data.manufacturer_data[SENSIRION_COMPANY_ID]
-        parsed = self._parse_manufacturer_data(mfr_data)
+        if logger and debug_level >= 1:
+            logger.info(f"  >>> SHT4x Device Detected <<<")
+            logger.info(f"  Temperature ticks: {temp_ticks}")
+            logger.info(f"  Humidity ticks: {humidity_ticks}")
         
-        if not parsed:
-            self.logger.debug(f"Failed to parse manufacturer data for {gadget.name}")
-            return None
+        # Conversion: T = -45 + (175.0 * ticks) / (2^16 - 1)
+        #             RH = -6 + (125.0 * ticks) / (2^16 - 1)
+        temp = -45 + ((175.0 * temp_ticks) / (2**16 - 1))
+        humidity = -6 + ((125.0 * humidity_ticks) / (2**16 - 1))
+        result['temperature'] = round(temp, 2)
+        result['humidity'] = round(humidity, 2)
+        result['sensor_type'] = 'SHT4x'
         
-        # Create reading with available data
-        reading = SensorReading(rssi=adv_data.rssi)
+        if logger and debug_level >= 1:
+            logger.info(f"  Temperature: {temp:.2f}°C")
+            logger.info(f"  Humidity: {humidity:.2f}%")
         
-        if 'temperature' in parsed:
-            # Apply temperature offset
-            reading.temperature = parsed['temperature'] + gadget.temp_offset
-        if 'humidity' in parsed:
-            reading.humidity = parsed['humidity']
-        if 'co2' in parsed:
-            reading.co2 = parsed['co2']
-        if 'voc' in parsed:
-            reading.voc = parsed['voc']
-        
-        return reading
+        return result
     
-    async def read_battery_level(self, mac: str) -> Optional[int]:
-        """Read battery level (requires connection)"""
-        try:
-            async with BleakClient(mac, timeout=self.config.connection_timeout) as client:
-                if not client.is_connected:
-                    return None
-                
-                battery_bytes = await client.read_gatt_char(BLE_UUID_BATTERY)
-                return int(battery_bytes[0]) if battery_bytes else None
-                
-        except Exception as e:
-            self.logger.debug(f"Battery read failed for {mac}: {e}")
+    # MyCO2 gadgets (type 8)
+    elif sample_type == b'\x00\x08':
+        if len(raw_data) < 10:
             return None
+        temp_ticks, humidity_ticks, co2 = struct.unpack("<HHH", raw_data[4:10])
+        
+        if logger and debug_level >= 1:
+            logger.info(f"  >>> MyCO2 Device Detected <<<")
+            logger.info(f"  Temperature ticks: {temp_ticks}")
+            logger.info(f"  Humidity ticks: {humidity_ticks}")
+            logger.info(f"  CO2 raw value: {co2}")
+        
+        # Conversion: T = -45 + (175.0 * ticks) / (2^16 - 1)
+        #             RH = (100.0 * ticks) / (2^16 - 1)
+        #             CO2 = transmitted value
+        temp = -45 + ((175.0 * temp_ticks) / (2**16 - 1))
+        humidity = (100.0 * humidity_ticks) / (2**16 - 1)
+        result['temperature'] = round(temp, 1)
+        result['humidity'] = round(humidity, 1)
+        result['co2'] = co2
+        result['sensor_type'] = 'MyCO2'
+        
+        if logger and debug_level >= 1:
+            logger.info(f"  Temperature: {temp:.2f}°C")
+            logger.info(f"  Humidity: {humidity:.2f}%")
+            logger.info(f"  CO2: {co2} ppm")
+        
+        # Check if there's VOC data (12+ bytes total)
+        if len(raw_data) >= 12:
+            voc = struct.unpack("<H", raw_data[10:12])[0]
+            result['voc'] = voc
+            if logger and debug_level >= 1:
+                logger.info(f"  VOC raw value: {voc}")
+                logger.info(f"  VOC: {voc} index")
+        
+        return result
+    
+    # Unknown sample type - log it for debugging
+    if logger:
+        logger.warning(f"  >>> UNKNOWN Sample Type: {sample_type.hex()} <<<")
+        logger.warning(f"  This might be an AQI/VOC device or unsupported sensor")
+        logger.warning(f"  Please check the data above to determine the conversion formula")
+    
+    return None
 
 # ============================================================================
-# MQTT PUBLISHER
+# BLE SCANNER CLASS
 # ============================================================================
 
-class MQTTPublisher:
-    """Handles MQTT publishing"""
+class SensirionBLEScanner:
+    """Scanner for Sensirion Smart Gadgets using advertisement data."""
     
-    def __init__(self, config: Config):
-        self.config = config
-        self.logger = config.logger
-        self.client = mqtt.Client()
-        self.connected = False
+    def __init__(self):
+        """Initialize the BLE scanner."""
+        # Parse debug level safely
+        debug_str = os.getenv('DEBUG_LEVEL', '0').strip()
+        self.debug_level = int(debug_str) if debug_str else 0
+        self.logger = self._setup_logging()
         
-        # Set up callbacks
-        self.client.on_connect = self._on_connect
-        self.client.on_disconnect = self._on_disconnect
+        # Parse device configurations from environment variables
+        self.devices = self._parse_device_config()
+        
+        if not self.devices:
+            self.logger.error("No devices configured! Please set HUMI_GADGETS, CO2_GADGETS, or AIQ_GADGETS")
+            sys.exit(1)
+        
+        self.logger.info(f"Configured {len(self.devices)} device(s):")
+        for device in self.devices:
+            self.logger.info(f"  {device.device_type.upper()}: {device.name} ({device.address}) offset={device.temp_offset:+.1f}°C")
+        
+        # Configuration from environment variables (handle empty strings)
+        scan_duration_str = os.getenv('SCAN_DURATION', str(DEFAULT_SCAN_DURATION)).strip()
+        self.scan_duration = float(scan_duration_str) if scan_duration_str else DEFAULT_SCAN_DURATION
+        
+        # Device-specific scan intervals (handle empty strings)
+        co2_interval_str = os.getenv('CO2_SCAN_INTERVAL', str(DEFAULT_CO2_SCAN_INTERVAL)).strip()
+        self.co2_scan_interval = int(co2_interval_str) if co2_interval_str else DEFAULT_CO2_SCAN_INTERVAL
+        
+        aiq_interval_str = os.getenv('AIQ_SCAN_INTERVAL', str(DEFAULT_AIQ_SCAN_INTERVAL)).strip()
+        self.aiq_scan_interval = int(aiq_interval_str) if aiq_interval_str else DEFAULT_AIQ_SCAN_INTERVAL
+        
+        humi_interval_str = os.getenv('HUMI_SCAN_INTERVAL', str(DEFAULT_HUMI_SCAN_INTERVAL)).strip()
+        self.humi_scan_interval = int(humi_interval_str) if humi_interval_str else DEFAULT_HUMI_SCAN_INTERVAL
+        
+        # Track last scan times per device type
+        self.last_scan_times = {'co2': 0, 'aiq': 0, 'humi': 0}
+        
+        # MQTT configuration
+        self.mqtt_broker = os.getenv('MQTT_BROKER', DEFAULT_MQTT_BROKER)
+        mqtt_port_str = os.getenv('MQTT_PORT', str(DEFAULT_MQTT_PORT)).strip()
+        self.mqtt_port = int(mqtt_port_str) if mqtt_port_str else DEFAULT_MQTT_PORT
+        self.mqtt_topic_prefix = os.getenv('MQTT_TOPIC_PREFIX', DEFAULT_MQTT_TOPIC_PREFIX)
+        
+        # MQTT client
+        self.mqtt_client = None
+        self.mqtt_connected = False
+        
+        self.logger.info("Sensirion BLE Scanner (Advertisement mode) initialized")
+        self.logger.info(f"  Scan duration: {self.scan_duration}s")
+        self.logger.info(f"  Scan intervals: CO2={self.co2_scan_interval}s, AQI={self.aiq_scan_interval}s, HUMI={self.humi_scan_interval}s")
+        self.logger.info(f"  MQTT broker: {self.mqtt_broker}:{self.mqtt_port}")
     
-    def _on_connect(self, client, userdata, flags, rc):
-        """Callback for MQTT connection"""
+    def _setup_logging(self) -> logging.Logger:
+        """Configure logging."""
+        # Check DEBUG_LEVEL environment variable (0=INFO, 1=DEBUG, 2=VERBOSE DEBUG)
+        # For backwards compatibility, also check DEBUG_MODE
+        if self.debug_level == 0:
+            # If DEBUG_LEVEL not set, try DEBUG_MODE
+            debug_mode_str = os.getenv('DEBUG_MODE', '0')
+            try:
+                self.debug_level = int(debug_mode_str)
+            except ValueError:
+                # Handle '1' or 'true' as level 1
+                if debug_mode_str.lower() in ('1', 'true'):
+                    self.debug_level = 1
+        
+        log_level = logging.DEBUG if self.debug_level >= 1 else logging.INFO
+        
+        logging.basicConfig(
+            level=log_level,
+            format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+        )
+        
+        # Bleak debug messages only at level 2
+        if self.debug_level >= 2:
+            logging.getLogger('bleak').setLevel(logging.DEBUG)
+        else:
+            logging.getLogger('bleak').setLevel(logging.WARNING)
+        
+        return logging.getLogger('SensirionBLE')
+    
+    def _parse_device_config(self) -> List[DeviceConfig]:
+        """Parse device configuration from environment variables."""
+        devices = []
+        
+        # Parse HUMI devices
+        humi_addrs = os.getenv('HUMI_GADGETS', '').split(',')
+        humi_names = os.getenv('HUMI_NAMES', '').split(',')
+        humi_offsets = os.getenv('HUMI_TEMP_OFFSET', '').split(',')
+        
+        for i, addr in enumerate(humi_addrs):
+            addr = addr.strip()
+            if addr:
+                name = humi_names[i].strip() if i < len(humi_names) else f'humi_{i}'
+                offset = float(humi_offsets[i].strip()) if i < len(humi_offsets) and humi_offsets[i].strip() else 0.0
+                devices.append(DeviceConfig(
+                    address=addr.lower(),
+                    name=name,
+                    temp_offset=offset,
+                    device_type='humi'
+                ))
+        
+        # Parse CO2 devices
+        co2_addrs = os.getenv('CO2_GADGETS', '').split(',')
+        co2_names = os.getenv('CO2_NAMES', '').split(',')
+        co2_offsets = os.getenv('CO2_TEMP_OFFSET', '').split(',')
+        
+        for i, addr in enumerate(co2_addrs):
+            addr = addr.strip()
+            if addr:
+                name = co2_names[i].strip() if i < len(co2_names) else f'co2_{i}'
+                offset = float(co2_offsets[i].strip()) if i < len(co2_offsets) and co2_offsets[i].strip() else 0.0
+                devices.append(DeviceConfig(
+                    address=addr.lower(),
+                    name=name,
+                    temp_offset=offset,
+                    device_type='co2'
+                ))
+        
+        # Parse AIQ devices
+        aiq_addrs = os.getenv('AIQ_GADGETS', '').split(',')
+        aiq_names = os.getenv('AIQ_NAMES', '').split(',')
+        aiq_offsets = os.getenv('AIQ_TEMP_OFFSET', '').split(',')
+        
+        for i, addr in enumerate(aiq_addrs):
+            addr = addr.strip()
+            if addr:
+                name = aiq_names[i].strip() if i < len(aiq_names) else f'aiq_{i}'
+                offset = float(aiq_offsets[i].strip()) if i < len(aiq_offsets) and aiq_offsets[i].strip() else 0.0
+                devices.append(DeviceConfig(
+                    address=addr.lower(),
+                    name=name,
+                    temp_offset=offset,
+                    device_type='aiq'
+                ))
+        
+        return devices
+    
+    def _setup_mqtt(self) -> None:
+        """Initialize MQTT client."""
+        self.mqtt_client = mqtt.Client(client_id='sensirion-ble-scanner')
+        self.mqtt_client.on_connect = self._on_mqtt_connect
+        self.mqtt_client.on_disconnect = self._on_mqtt_disconnect
+        
+        try:
+            self.logger.info(f"Connecting to MQTT broker {self.mqtt_broker}:{self.mqtt_port}...")
+            self.mqtt_client.connect(self.mqtt_broker, self.mqtt_port, 60)
+            self.mqtt_client.loop_start()
+        except Exception as e:
+            self.logger.error(f"Failed to connect to MQTT broker: {e}")
+    
+    def _on_mqtt_connect(self, client, userdata, flags, rc):
+        """MQTT connection callback."""
         if rc == 0:
-            self.connected = True
+            self.mqtt_connected = True
             self.logger.info("Connected to MQTT broker")
         else:
-            self.logger.error(f"Failed to connect to MQTT broker: {rc}")
+            self.logger.error(f"MQTT connection failed with code {rc}")
     
-    def _on_disconnect(self, client, userdata, rc):
-        """Callback for MQTT disconnection"""
-        self.connected = False
+    def _on_mqtt_disconnect(self, client, userdata, rc):
+        """MQTT disconnection callback."""
+        self.mqtt_connected = False
         if rc != 0:
-            self.logger.warning(f"Unexpected MQTT disconnection: {rc}")
+            self.logger.warning(f"Unexpected MQTT disconnection (code {rc})")
     
-    async def connect(self, max_retries: int = 10, retry_delay: int = 5):
-        """Connect to MQTT broker with retry logic"""
-        for attempt in range(max_retries):
-            try:
-                self.logger.info(f"Connecting to MQTT broker at {self.config.mqtt_broker}:{self.config.mqtt_port}")
-                self.client.connect(self.config.mqtt_broker, self.config.mqtt_port, 60)
-                self.client.loop_start()
-                
-                # Wait for connection
-                timeout = 10
-                start = time.time()
-                while not self.connected and (time.time() - start) < timeout:
-                    await asyncio.sleep(0.1)
-                
-                if self.connected:
-                    return True
+    def parse_advertisement_data(self, adv_data: AdvertisementData, config: DeviceConfig) -> Optional[Dict]:
+        """
+        Parse Sensirion advertisement data for temperature and humidity.
+        
+        Args:
+            adv_data: Advertisement data from the BLE device
+            config: Device configuration
+            
+        Returns:
+            Dictionary with parsed sensor values or None if parsing failed
+        """
+        # Check for Sensirion manufacturer data
+        if SENSIRION_COMPANY_ID not in adv_data.manufacturer_data:
+            if self.debug_level >= 2:
+                self.logger.debug(f"  No Sensirion manufacturer data found")
+                self.logger.debug(f"  Available manufacturer IDs: {list(adv_data.manufacturer_data.keys())}")
+            return None
+        
+        raw_data = adv_data.manufacturer_data[SENSIRION_COMPANY_ID]
+        
+        if self.debug_level >= 2:
+            self.logger.debug(f"  Raw manufacturer data ({len(raw_data)} bytes): {raw_data.hex()}")
+        
+        # Parse the advertisement data with debug logging
+        parsed = parse_sensirion_advertisement(raw_data, logger=self.logger, debug_level=self.debug_level)
+        
+        if not parsed:
+            self.logger.warning(f"Failed to parse advertisement data for {config.name}")
+            if self.debug_level >= 1:
+                self.logger.debug(f"  Raw data: {raw_data.hex()}")
+            return None
+        
+        if self.debug_level >= 1:
+            self.logger.debug(f"  Sensor type: {parsed.get('sensor_type', 'Unknown')}")
+            self.logger.debug(f"  Device ID: {parsed.get('device_id', 'Unknown')}")
+        
+        result = {}
+        
+        # Apply temperature and humidity corrections if both are available
+        if 'temperature' in parsed and 'humidity' in parsed:
+            temp_raw = parsed['temperature']
+            hum_raw = parsed['humidity']
+            
+            if self.debug_level >= 1:
+                self.logger.debug(f"  Temperature (raw): {temp_raw:.2f}°C")
+                self.logger.debug(f"  Humidity (raw): {hum_raw:.1f}%")
+            
+            # Apply correction using absolute humidity method
+            temp_corrected, hum_corrected = correct_humidity(temp_raw, hum_raw, config.temp_offset)
+            result['temperature'] = round(temp_corrected, 2)
+            result['humidity'] = round(hum_corrected, 1)
+            
+            if self.debug_level >= 1:
+                self.logger.debug(f"  Temperature (corrected): {temp_corrected:.2f}°C (offset: {config.temp_offset:+.1f}K)")
+                self.logger.debug(f"  Humidity (corrected): {hum_corrected:.1f}% (via absolute humidity)")
+        
+        # Add CO2 if present (for MyCO2 devices)
+        if 'co2' in parsed:
+            result['co2'] = parsed['co2']
+            if self.debug_level >= 1:
+                self.logger.debug(f"  CO2: {parsed['co2']} ppm")
+        
+        # Add VOC if present (for AQI/MyCO2 devices)
+        if 'voc' in parsed:
+            result['voc'] = parsed['voc']
+            if self.debug_level >= 1:
+                self.logger.debug(f"  VOC: {parsed['voc']} index")
+        
+        return result if result else None
+    
+    async def scan_and_parse_devices(self) -> List[SensorReading]:
+        """Scan for configured Sensirion BLE devices and parse their advertisement data."""
+        self.logger.debug(f"Scanning for configured Sensirion devices ({self.scan_duration}s)...")
+        if self.debug_level >= 2:
+            self.logger.debug(f"Looking for devices: {[f'{d.name} ({d.address})' for d in self.devices]}")
+        
+        # Discover devices
+        if self.debug_level >= 2:
+            scan_start = time.time()
+        devices = await BleakScanner.discover(timeout=self.scan_duration, return_adv=True)
+        if self.debug_level >= 2:
+            scan_duration = time.time() - scan_start
+            self.logger.debug(f"Scan completed in {scan_duration:.2f}s, found {len(devices)} total BLE devices")
+        
+        # Filter for configured devices and parse their data
+        readings = []
+        for device, adv_data in devices.values():
+            device_addr = device.address.lower()
+            for config in self.devices:
+                if config.address == device_addr:
+                    self.logger.debug(f"Found configured device: {config.name} ({device.address}), RSSI: {adv_data.rssi} dBm")
                     
-            except Exception as e:
-                self.logger.warning(f"MQTT connection attempt {attempt + 1}/{max_retries} failed: {e}")
-                if attempt < max_retries - 1:
-                    await asyncio.sleep(retry_delay)
-        
-        self.logger.error("Failed to connect to MQTT broker after all retries")
-        return False
-    
-    def publish_reading(self, gadget: GadgetConfig, reading: SensorReading):
-        """Publish sensor reading to MQTT"""
-        base_topic = f"energiemonitor/{gadget.gadget_type}/{gadget.name}"
-        
-        if reading.temperature is not None:
-            self.client.publish(f"{base_topic}/temperature", f"{reading.temperature:.2f}", qos=MQTT_QOS)
-        if reading.humidity is not None:
-            self.client.publish(f"{base_topic}/humidity", f"{reading.humidity:.2f}", qos=MQTT_QOS)
-        if reading.co2 is not None:
-            self.client.publish(f"{base_topic}/co2", str(reading.co2), qos=MQTT_QOS)
-        if reading.voc is not None:
-            self.client.publish(f"{base_topic}/voc", str(reading.voc), qos=MQTT_QOS)
-        if reading.battery is not None:
-            self.client.publish(f"{base_topic}/battery", str(reading.battery), qos=MQTT_QOS)
-        if reading.rssi is not None:
-            self.client.publish(f"{base_topic}/rssi", str(reading.rssi), qos=MQTT_QOS)
-    
-    def disconnect(self):
-        """Disconnect from MQTT broker"""
-        self.client.loop_stop()
-        self.client.disconnect()
-
-# ============================================================================
-# MAIN SCANNER LOGIC
-# ============================================================================
-
-class ScanCoordinator:
-    """Coordinates scanning of all gadgets with retry logic"""
-    
-    def __init__(self, config: Config, scanner: BLEScanner, publisher: MQTTPublisher):
-        self.config = config
-        self.scanner = scanner
-        self.publisher = publisher
-        self.logger = config.logger
-        
-        # Track last scan times
-        self.last_humi_scan = 0
-        self.last_co2_scan = 0
-        self.last_aqi_scan = 0
-        self.last_discovery = time.time()
-        
-        # Build set of all configured MACs
-        self.all_macs = set()
-        for gadget in (self.config.humi_gadgets + self.config.co2_gadgets + self.config.aiq_gadgets):
-            self.all_macs.add(gadget.mac.lower())
-    
-    async def discover_nearby_devices(self):
-        """Discover all nearby BLE devices and identify Sensirion gadgets"""
-        if not self.config.debug_mode:
-            return
-        
-        try:
-            self.logger.debug("Discovering nearby BLE devices...")
-            devices = await BleakScanner.discover(timeout=10.0, return_adv=True)
-            
-            sensirion_found = []
-            configured_found = []
-            other_count = 0
-            
-            for address, (device, adv_data) in devices.items():
-                mac = address.lower()
-                
-                # Check if it's a Sensirion device (by manufacturer data)
-                if SENSIRION_COMPANY_ID in adv_data.manufacturer_data:
-                    mfr_data = adv_data.manufacturer_data[SENSIRION_COMPANY_ID]
-                    parsed = self.scanner._parse_manufacturer_data(mfr_data)
+                    # Parse advertisement data
+                    sensor_data = self.parse_advertisement_data(adv_data, config)
                     
-                    if parsed:
-                        signals = "+".join(parsed['signals'])
-                        name = device.name or "Unknown"
-                        rssi = adv_data.rssi
-                        
-                        if mac in self.all_macs:
-                            configured_found.append((name, mac, rssi, signals))
-                        else:
-                            sensirion_found.append((name, mac, rssi, signals))
-                else:
-                    other_count += 1
-            
-            # Updated message format
-            if configured_found:
-                self.logger.debug(f"Found {len(sensirion_found)} additional Sensirion device(s), {len(configured_found)} configured device(s), {other_count} other device(s)")
-            else:
-                self.logger.debug(f"Found {len(sensirion_found)} Sensirion device(s), {other_count} other device(s)")
-            
-            # Show configured devices
-            if configured_found:
-                for name, mac, rssi, signals in configured_found:
-                    self.logger.debug(f"  [CONFIGURED] '{name}' ({mac}) RSSI={rssi}dBm [{signals}]")
-            
-            # Show additional (unconfigured) devices
-            if sensirion_found:
-                for name, mac, rssi, signals in sensirion_found:
-                    self.logger.debug(f"  [SENSIRION] '{name}' ({mac}) RSSI={rssi}dBm [{signals}]")
+                    if sensor_data:
+                        reading = SensorReading(
+                            address=device.address,
+                            name=config.name,
+                            device_type=config.device_type,
+                            rssi=adv_data.rssi,
+                            temperature=sensor_data.get('temperature'),
+                            humidity=sensor_data.get('humidity'),
+                            co2=sensor_data.get('co2'),
+                            voc=sensor_data.get('voc')
+                        )
+                        readings.append(reading)
+                        self.logger.debug(f"Successfully parsed data from {config.name}")
+                    else:
+                        self.logger.warning(f"No parseable data from {config.name}")
                     
-        except Exception as e:
-            self.logger.debug(f"Discovery error: {e}")
-    
-    async def scan_gadgets(self, gadgets: List[GadgetConfig]) -> Dict[str, Optional[SensorReading]]:
-        """Scan gadgets using advertisement data"""
-        if not gadgets:
-            return {}
+                    break
         
-        # Get target MACs
-        target_macs = {g.mac.lower() for g in gadgets}
-        
-        # Scan for devices
-        found_devices = await self.scanner.scan_for_devices(target_macs)
-        
-        # Process readings
-        readings = {}
-        for gadget in gadgets:
-            mac = gadget.mac.lower()
-            
-            if mac in found_devices:
-                device, adv_data = found_devices[mac]
-                reading = self.scanner.read_from_advertisement(gadget, adv_data)
-                
-                if reading:
-                    readings[mac] = reading
-                    
-                    # Log successful read
-                    parts = [f"{gadget.gadget_type.upper()} '{gadget.name}'"]
-                    if reading.temperature is not None:
-                        parts.append(f"T={reading.temperature:.2f}°C")
-                    if reading.humidity is not None:
-                        parts.append(f"H={reading.humidity:.1f}%")
-                    if reading.co2 is not None:
-                        parts.append(f"CO2={reading.co2}ppm")
-                    if reading.voc is not None:
-                        parts.append(f"VOC={reading.voc}")
-                    parts.append(f"RSSI={reading.rssi}dBm")
-                    
-                    self.logger.info(f"[OK] {', '.join(parts)}")
-                else:
-                    readings[mac] = None
-            else:
-                readings[mac] = None
+        if not readings:
+            self.logger.warning(f"No configured devices found or parsed. Looking for: {[d.address for d in self.devices]}")
+            if self.debug_level >= 2:
+                self.logger.warning(f"  All discovered devices: {[dev.address.lower() for dev, _ in devices.values()]}")
         
         return readings
     
-    async def run_scan_cycle(self):
-        """Run a single scan cycle based on independent timers"""
-        current_time = time.time()
-        
-        # Device discovery every 10 minutes (if debug mode)
-        if (current_time - self.last_discovery) >= DISCOVERY_INTERVAL:
-            await self.discover_nearby_devices()
-            self.last_discovery = current_time
-        
-        # Determine which gadget types to scan
-        scan_co2 = (current_time - self.last_co2_scan) >= self.config.co2_scan_interval
-        scan_aqi = (current_time - self.last_aqi_scan) >= self.config.aiq_scan_interval
-        scan_humi = (current_time - self.last_humi_scan) >= self.config.humi_scan_interval
-        
-        if not (scan_co2 or scan_aqi or scan_humi):
+    def publish_reading(self, reading: SensorReading) -> None:
+        """Publish sensor reading to MQTT."""
+        if not self.mqtt_connected:
+            self.logger.warning("MQTT not connected, skipping publish")
             return
         
-        self.logger.info(f"Scan cycle: CO2={scan_co2}, AQI={scan_aqi}, HUMI={scan_humi}")
+        # Determine base topic based on device type
+        # HUMI: energiemonitor/humi/{name}/...
+        # CO2:  energiemonitor/co2/{name}/...
+        # AQI:  energiemonitor/aqi/{name}/...
+        base_topic = f"energiemonitor/{reading.device_type}/{reading.name}"
         
-        # Collect all gadgets to scan
-        gadgets_to_scan = []
-        if scan_co2:
-            gadgets_to_scan.extend(self.config.co2_gadgets)
-        if scan_aqi:
-            gadgets_to_scan.extend(self.config.aiq_gadgets)
-        if scan_humi:
-            gadgets_to_scan.extend(self.config.humi_gadgets)
+        # Publish individual values to separate topics
+        values_published = 0
         
-        if not gadgets_to_scan:
-            return
+        if reading.temperature is not None:
+            topic = f"{base_topic}/temperature"
+            self._publish_value(topic, reading.temperature)
+            values_published += 1
         
-        # Phase 1: Scan all gadgets
-        retry_start = time.time()
-        readings = await self.scan_gadgets(gadgets_to_scan)
+        if reading.humidity is not None:
+            topic = f"{base_topic}/humidity"
+            self._publish_value(topic, reading.humidity)
+            values_published += 1
         
-        # Publish successful readings
-        for gadget in gadgets_to_scan:
-            mac = gadget.mac.lower()
-            if mac in readings and readings[mac] is not None:
-                self.publisher.publish_reading(gadget, readings[mac])
+        if reading.co2 is not None:
+            topic = f"{base_topic}/co2"
+            self._publish_value(topic, reading.co2)
+            values_published += 1
         
-        # Track failed gadgets
-        failed_gadgets = [g for g in gadgets_to_scan if readings.get(g.mac.lower()) is None]
+        if reading.voc is not None:
+            topic = f"{base_topic}/voc"
+            self._publish_value(topic, reading.voc)
+            values_published += 1
         
-        # Phase 2: Retry failed gadgets
-        retry_count = 1
-        while failed_gadgets and retry_count <= self.config.max_retries:
-            # Check timeout
-            if (time.time() - retry_start) > self.config.retry_max_duration:
-                self.logger.warning(f"Retry timeout ({self.config.retry_max_duration}s) exceeded")
-                break
-            
-            delay = min(INITIAL_RETRY_DELAY * (2 ** (retry_count - 1)), MAX_RETRY_DELAY)
-            self.logger.debug(f"Retry {retry_count}/{self.config.max_retries} for {len(failed_gadgets)} gadgets ({delay}s delay)")
-            await asyncio.sleep(delay)
-            
-            # Retry scan
-            retry_readings = await self.scan_gadgets(failed_gadgets)
-            
-            # Publish and update failed list
-            still_failed = []
-            for gadget in failed_gadgets:
-                mac = gadget.mac.lower()
-                if mac in retry_readings and retry_readings[mac] is not None:
-                    self.publisher.publish_reading(gadget, retry_readings[mac])
-                else:
-                    still_failed.append(gadget)
-            
-            failed_gadgets = still_failed
-            retry_count += 1
+        if reading.battery is not None:
+            topic = f"{base_topic}/battery"
+            self._publish_value(topic, reading.battery)
+            values_published += 1
         
-        # Log persistent failures
-        if failed_gadgets:
-            for gadget in failed_gadgets:
-                self.logger.warning(f"[FAIL] {gadget.gadget_type.upper()} '{gadget.name}' ({gadget.mac}): Not found after {self.config.max_retries} retries")
+        if reading.rssi is not None:
+            topic = f"{base_topic}/rssi"
+            self._publish_value(topic, reading.rssi)
+            values_published += 1
         
-        # Update last scan times
-        if scan_co2:
-            self.last_co2_scan = current_time
-        if scan_aqi:
-            self.last_aqi_scan = current_time
-        if scan_humi:
-            self.last_humi_scan = current_time
+        if values_published > 0:
+            self.logger.debug(f"Published {values_published} values for {reading.name}")
     
-    def get_next_scan_interval(self) -> float:
-        """Calculate time until next scan"""
+    def _publish_value(self, topic: str, value) -> None:
+        """Publish a single value to an MQTT topic."""
+        try:
+            result = self.mqtt_client.publish(topic, str(value), qos=0, retain=False)
+            if result.rc != mqtt.MQTT_ERR_SUCCESS:
+                self.logger.warning(f"Failed to publish to {topic}: {result.rc}")
+        except Exception as e:
+            self.logger.warning(f"MQTT publish error for {topic}: {e}")
+    
+    def _should_scan_device(self, device_type: str) -> bool:
+        """Check if enough time has passed to scan a specific device type."""
         current_time = time.time()
         
-        intervals = []
+        interval_map = {
+            'co2': self.co2_scan_interval,
+            'aiq': self.aiq_scan_interval,
+            'humi': self.humi_scan_interval
+        }
         
-        if self.config.co2_gadgets:
-            time_until_co2 = self.config.co2_scan_interval - (current_time - self.last_co2_scan)
-            intervals.append(max(0, time_until_co2))
+        interval = interval_map.get(device_type, self.co2_scan_interval)
+        last_scan = self.last_scan_times.get(device_type, 0)
         
-        if self.config.aiq_gadgets:
-            time_until_aqi = self.config.aiq_scan_interval - (current_time - self.last_aqi_scan)
-            intervals.append(max(0, time_until_aqi))
+        return (current_time - last_scan) >= interval
+    
+    async def run(self) -> None:
+        """Main run loop."""
+        self._setup_mqtt()
         
-        if self.config.humi_gadgets:
-            time_until_humi = self.config.humi_scan_interval - (current_time - self.last_humi_scan)
-            intervals.append(max(0, time_until_humi))
+        self.logger.info("Starting BLE scanner loop (advertisement mode)...")
         
-        return min(intervals) if intervals else self.config.co2_scan_interval
+        while True:
+            try:
+                current_time = time.time()
+                
+                # Determine which device types should be scanned
+                scan_co2 = self._should_scan_device('co2')
+                scan_aiq = self._should_scan_device('aiq')
+                scan_humi = self._should_scan_device('humi')
+                
+                if scan_co2 or scan_aiq or scan_humi:
+                    # Scan and parse devices
+                    readings = await self.scan_and_parse_devices()
+                    
+                    # Filter and publish readings based on intervals
+                    for reading in readings:
+                        device_type = reading.device_type
+                        
+                        # Check if this device type should be published
+                        should_publish = False
+                        if device_type == 'co2' and scan_co2:
+                            should_publish = True
+                            self.last_scan_times['co2'] = current_time
+                        elif device_type == 'aiq' and scan_aiq:
+                            should_publish = True
+                            self.last_scan_times['aiq'] = current_time
+                        elif device_type == 'humi' and scan_humi:
+                            should_publish = True
+                            self.last_scan_times['humi'] = current_time
+                        
+                        if should_publish:
+                            self.publish_reading(reading)
+                    
+                    self.logger.debug(f"Scan complete. Published readings for: CO2={scan_co2}, AQI={scan_aiq}, HUMI={scan_humi}")
+                
+                # Sleep for a short time before next check
+                await asyncio.sleep(10)
+                
+            except KeyboardInterrupt:
+                self.logger.info("Shutting down...")
+                break
+            except Exception as e:
+                self.logger.error(f"Error in main loop: {e}")
+                await asyncio.sleep(10)
+        
+        # Cleanup
+        if self.mqtt_client:
+            self.mqtt_client.loop_stop()
+            self.mqtt_client.disconnect()
 
 # ============================================================================
 # MAIN
 # ============================================================================
 
 async def main():
-    """Main entry point"""
-    try:
-        # Load configuration
-        config = Config()
-        
-        # Initialize components
-        scanner = BLEScanner(config)
-        publisher = MQTTPublisher(config)
-        
-        # Connect to MQTT
-        if not await publisher.connect():
-            config.logger.error("Failed to connect to MQTT broker, exiting")
-            sys.exit(1)
-        
-        # Initialize coordinator
-        coordinator = ScanCoordinator(config, scanner, publisher)
-        
-        config.logger.info("BLE Scanner started (ADVERTISEMENT MODE)")
-        config.logger.info(f"Scan intervals: HUMI={config.humi_scan_interval}s, CO2={config.co2_scan_interval}s, AQI={config.aiq_scan_interval}s")
-        config.logger.info(f"Scan duration: {config.scan_duration}s per cycle")
-        
-        # Initial device discovery
-        await coordinator.discover_nearby_devices()
-        
-        # Main loop
-        while True:
-            try:
-                await coordinator.run_scan_cycle()
-                
-                # Calculate time until next scan
-                sleep_time = coordinator.get_next_scan_interval()
-                if sleep_time > 0:
-                    config.logger.info(f"Sleeping for {sleep_time:.1f}s until next scan")
-                    await asyncio.sleep(sleep_time)
-                
-            except Exception as e:
-                config.logger.error(f"Error in scan cycle: {e}", exc_info=True)
-                await asyncio.sleep(60)
-    
-    except KeyboardInterrupt:
-        config.logger.info("Shutdown requested")
-    except Exception as e:
-        config.logger.error(f"Fatal error: {e}", exc_info=True)
-        sys.exit(1)
-    finally:
-        if 'publisher' in locals():
-            publisher.disconnect()
+    """Main entry point."""
+    scanner = SensirionBLEScanner()
+    await scanner.run()
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("\nShutdown requested...exiting")
+    except Exception as e:
+        print(f"Fatal error: {e}")
+        sys.exit(1)

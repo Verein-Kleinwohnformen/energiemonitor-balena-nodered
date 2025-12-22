@@ -10,5 +10,5 @@ hciconfig hci0 up 2>/dev/null || echo "Warning: Could not bring up hci0"
 echo "Checking Bluetooth adapter status:"
 hciconfig -a
 
-# Start the Python scanner
+# Start the Python scanner (advertisement-based with GATT fallback)
 exec python -u ble_scanner.py
