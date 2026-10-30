@@ -15,9 +15,6 @@ assets:
 data:
   applicationEnvironmentVariables:
     - PORT: 80
-    - USERNAME: balena
-    - PASSWORD: balena
-    - ENCRIPTION_KEY: balena
   defaultDeviceType: raspberry4-64
   supportedDeviceTypes:
     - raspberrypi4-64
