@@ -17,9 +17,9 @@ services:
     labels:
       io.balena.features.supervisor-api: '1'
     environment:
-      - "USERNAME=balena"
-      - "PASSWORD=balena"
-      - "ENCRIPTION_KEY=balena"
+      - USERNAME
+      - PASSWORD
+      - ENCRIPTION_KEY
     cap_add:
       - SYS_RAWIO
       - NET_ADMIN
@@ -38,7 +38,7 @@ services:
     networks:
       - internal
     ports:
-      - "1883:1883"
+      - "127.0.0.1:1883:1883"
     volumes:
       - mqtt-data:/mosquitto/data
       - mqtt-config:/mosquitto/config
