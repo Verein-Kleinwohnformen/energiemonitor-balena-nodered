@@ -111,6 +111,7 @@ cd ../../mnt/boot/system-connections
 - Die zu kopierenden Files befinden sich in Ordner system-connections in diesem Repository.
 - Das File "cellular" brauchen wir nur, wenn ein LTE-Modul mit SIM-Karte verwendet wird
 - Das File "balena-hotspot" muss in jedem Fall kopiert werden.
+- **Eigenes Hotspot-Passwort setzen:** Im File "balena-hotspot" den Platzhalter `<DEIN-HOTSPOT-PASSWORT>` hinter `psk=` durch ein eigenes, zufälliges Passwort (mindestens 12 Zeichen) ersetzen, bevor du es kopierst. Verwende pro Gerät ein eigenes Passwort und committe es nie ins Repository. Am Hotspot hängen Shelly und der lokale MQTT-Broker, der ohne Anmeldung arbeitet.
 - Am einfachsten kopierst du einfach den Inhalt des Files in ein neues File in der Commandline:
 ```
 cat > balena-hotspot
@@ -122,7 +123,7 @@ Ctrl+D to exit
 
 #### NodeRED konfigurieren
 - Im Gerätepanel gibt es einen Link zur "Public Device URL"
-- Login mit dem Default-Username `emon` und Passwort `REMOVED` oder dem neuen Passwort, wenn es für dieses Gerät überschrieben wurde
+- Login mit dem Benutzernamen und Passwort, die du als Device-Variablen `USERNAME` und `PASSWORD` gesetzt hast. Diese beiden Variablen **müssen** pro Gerät gesetzt werden (starkes, eigenes Passwort); das Gerät ist über die Public Device URL aus dem Internet erreichbar. Gib die URL nicht weiter.
 - Jetzt kannst du beginnen, die NodeRED-Flows für deinen Monitor zu schreiben. Die Template-Files und alles weitere dazu findest du im [NodeRED Repository](https://github.com/Verein-Kleinwohnformen/energiemonitor-nodered-flows), dieses klonst du am besten mit dem integrierten Git von NodeRED.
 
 

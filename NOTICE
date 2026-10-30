@@ -1,0 +1,7 @@
+Energiemonitor Balena Node-RED
+Copyright 2025 Verein Kleinwohnformen
+
+This project is a modified fork of balena-node-red
+(https://github.com/balena-labs-projects/balena-node-red),
+Copyright 2016 balena Ltd., licensed under the Apache License, Version 2.0
+(see LICENCE). Modifications are Copyright Verein Kleinwohnformen.

@@ -150,3 +150,7 @@ bower_components
 .bower-cache
 .bower-registry
 .bower-tmp
+
+# Python
+__pycache__/
+*.py[cod]
