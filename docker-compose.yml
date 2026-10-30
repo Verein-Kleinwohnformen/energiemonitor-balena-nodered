@@ -46,7 +46,7 @@ services:
 
   ble-scanner:
     build: ./ble-scanner
-    restart: always
+    restart: on-failure
     privileged: true
     network_mode: host
     labels:
