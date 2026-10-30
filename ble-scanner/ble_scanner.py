@@ -378,8 +378,11 @@ class SensirionBLEScanner:
         self.devices = self._parse_device_config()
         
         if not self.devices:
-            self.logger.error("No devices configured! Please set HUMI_GADGETS, CO2_GADGETS, or AIQ_GADGETS")
-            sys.exit(1)
+            # Kein Fehler: Geraete ohne Sensirion-Gadgets sind erlaubt. Nicht beenden,
+            # sonst startet Balena den Container im Minutentakt neu.
+            self.logger.info("No devices configured (HUMI_GADGETS, CO2_GADGETS, AIQ_GADGETS empty). Idling.")
+            while True:
+                time.sleep(3600)
         
         self.logger.info(f"Configured {len(self.devices)} device(s):")
         for device in self.devices:
