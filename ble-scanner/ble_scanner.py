@@ -378,9 +378,11 @@ class SensirionBLEScanner:
         self.devices = self._parse_device_config()
         
         if not self.devices:
-            self.logger.error("No devices configured! Please set HUMI_GADGETS, CO2_GADGETS, or AIQ_GADGETS")
-            sys.exit(1)
-        
+            # Kein Fehler: Geraete ohne Sensirion-Gadgets sind erlaubt. Sauber beenden (Exit-Code 0);
+            # docker-compose startet den Container nur bei Fehlern neu (restart: on-failure).
+            self.logger.info("No devices configured (HUMI_GADGETS, CO2_GADGETS, AIQ_GADGETS empty). Shutting down.")
+            sys.exit(0)
+
         self.logger.info(f"Configured {len(self.devices)} device(s):")
         for device in self.devices:
             self.logger.info(f"  {device.device_type.upper()}: {device.name} ({device.address}) offset={device.temp_offset:+.1f}°C")
