@@ -181,6 +181,15 @@ module.exports = {
         // j5board:require("johnny-five").Board({repl:false})
     },
 
+    // Context storage. "memory" stays the default, so existing flows behave as before.
+    // The "file" store persists to <userDir>/context on the /data volume and survives
+    // restarts and container updates. Use it explicitly, e.g. flow.get("key", "file").
+    // Used by the D1 tank filter (6 h window, consumption counter).
+    contextStorage: {
+        default: { module: "memory" },
+        file: { module: "localfilesystem" }
+    },
+
     // The following property can be used to order the categories in the editor
     // palette. If a node's category is not in the list, the category will get
     // added to the end of the palette.
