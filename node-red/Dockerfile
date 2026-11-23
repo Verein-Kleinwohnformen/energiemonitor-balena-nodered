@@ -31,6 +31,7 @@ RUN npm install -g --production --unsafe-perm \
       node-red-node-serialport \
       @bitpoolos/edge-modbus \
       @vereinkleinwohnformen/node-red-energiemonitor \
+      node-red-contrib-netatmo-cloud \
     && npm install --unsafe-perm --production && npm cache clean --force
 
 ###
@@ -65,7 +66,8 @@ RUN npm install -g --production --unsafe-perm \
     node-red-contrib-aggregator \
     node-red-node-serialport \
     @bitpoolos/edge-modbus \
-    @vereinkleinwohnformen/node-red-energiemonitor
+    @vereinkleinwohnformen/node-red-energiemonitor \
+    node-red-contrib-netatmo-cloud
 
 # Defines our working directory in container
 WORKDIR /usr/src/app
