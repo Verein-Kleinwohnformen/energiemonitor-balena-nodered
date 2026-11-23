@@ -27,11 +27,11 @@ Alles läuft über Balena-Variablen. Die vollständige Liste mit Bedeutung steht
 - `USERNAME` und `PASSWORD` für den Node-RED-Login. Ohne `PASSWORD` startet Node-RED nicht.
 - `ENCRIPTION_KEY` verschlüsselt die in Node-RED gespeicherten Zugangsdaten. Der Name enthält den Tippfehler, weil Node-RED ihn so liest.
 
-Das Gerät ist über die Balena Public Device URL erreichbar. Setze die Werte vor dem ersten Start, verwende starke, zufällige Werte und gib die URL nicht weiter. Mehr dazu in der [Sicherheits-Doku](https://github.com/Verein-Kleinwohnformen/energiemonitor-docs/blob/main/docs/sicherheit.md). Wenn du `ENCRIPTION_KEY` nachträglich änderst, gehen die gespeicherten Zugangsdaten verloren, es sei denn, du [migrierst sie](https://github.com/Verein-Kleinwohnformen/energiemonitor-docs/blob/main/docs/migration-verschluesselungsschluessel.md).
+Das Gerät ist über die Balena Public Device URL erreichbar. Setze die Werte vor dem ersten Start, verwende starke, zufällige Werte und gib die URL nicht weiter. Schalte die Public Device URL aus, wenn du nicht an den Flows arbeitest (Zugang dann über `balena device tunnel <UUID> -p 80:8080`), und betreibe das Gerät nicht im Dev-Modus: Dort ist im lokalen Netz SSH als root ohne Passwort offen. Mehr dazu in der [Sicherheits-Doku](https://github.com/Verein-Kleinwohnformen/energiemonitor-docs/blob/main/docs/sicherheit.md). Wenn du `ENCRIPTION_KEY` nachträglich änderst, gehen die gespeicherten Zugangsdaten verloren, es sei denn, du [migrierst sie](https://github.com/Verein-Kleinwohnformen/energiemonitor-docs/blob/main/docs/migration-verschluesselungsschluessel.md).
 
 ## Netzwerk
 
-Der Hotspot `energiemonitor` und die optionale LTE-Verbindung werden über Dateien in `/mnt/boot/system-connections` des Host-OS konfiguriert. Vorlagen: [`system_connections/`](system_connections/). In `balena-hotspot` ersetzt du `<DEIN-HOTSPOT-PASSWORT>` durch ein eigenes Passwort (mindestens 12 Zeichen, pro Gerät). Schritte in der Bauanleitung, Kapitel 8.
+Der Hotspot `energiemonitor` und die optionale LTE-Verbindung werden über Dateien in `/mnt/boot/system-connections` des Host-OS konfiguriert. Vorlagen: [`system_connections/`](system_connections/). In `balena-hotspot` ersetzt du `<DEIN-HOTSPOT-PASSWORT>` durch ein eigenes Passwort (mindestens 12 Zeichen, pro Gerät). Frühere Fassungen dieser Vorlage enthielten ein echtes Passwort, das in der Git-Geschichte öffentlich bleibt. Wer den Hotspot damit eingerichtet hat, setzt ein neues. Schritte in der Bauanleitung, Kapitel 8.
 
 ## Deployment
 
